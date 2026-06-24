@@ -305,6 +305,11 @@ func (a *App) buildUI() fyne.CanvasObject {
 		container.NewTabItem("Text", textTab),
 		container.NewTabItem("Designer", a.buildDesignerTab()),
 	)
+	tabs.OnSelected = func(ti *container.TabItem) {
+		if ti.Text == "Designer" {
+			a.renderDesignPreview()
+		}
+	}
 
 	// Preview
 	a.previewImg = canvas.NewImageFromImage(nil)
@@ -534,14 +539,24 @@ func (a *App) connectManualPort() {
 }
 
 func (a *App) disconnect() {
-	if a.printer != nil {
-		a.printer.Close()
-		a.printer = nil
-	}
+	// Capture and clear references first so the UI updates immediately.
+	p := a.printer
+	conn := a.rfcommConn
+	a.printer = nil
+	a.rfcommConn = nil
 
-	if a.rfcommConn != nil {
-		a.rfcommConn.Close()
-		a.rfcommConn = nil
+	// Closing the serial port can block in the OS driver (notably on macOS
+	// when the Bluetooth link is already gone). Do it off the UI thread so
+	// the app does not freeze.
+	if p != nil || conn != nil {
+		go func() {
+			if p != nil {
+				p.Close()
+			}
+			if conn != nil {
+				conn.Close()
+			}
+		}()
 	}
 
 	a.connectBtn.SetText("Connect")

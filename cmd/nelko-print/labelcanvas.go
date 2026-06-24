@@ -52,6 +52,13 @@ func (c *labelCanvas) SetSize(size tspl.LabelSize) {
 
 func (c *labelCanvas) Selected() label.Element { return c.selected }
 
+// SetDocument replaces the document (e.g. after loading from disk).
+func (c *labelCanvas) SetDocument(doc *label.Document) {
+	c.doc = doc
+	c.selected = nil
+	c.Rebuild()
+}
+
 func (c *labelCanvas) Add(el label.Element) {
 	// place at landscape center
 	b := el.Bounds()

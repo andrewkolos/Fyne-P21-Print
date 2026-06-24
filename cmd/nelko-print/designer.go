@@ -3,6 +3,7 @@ package main
 import (
 	"image"
 	"image/png"
+	"io"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
@@ -35,9 +36,12 @@ func (a *App) buildDesignerTab() fyne.CanvasObject {
 		a.designCanvas.DeleteSelected()
 		a.refreshDesignerProps()
 	})
+	saveBtn := widget.NewButton("Save", func() { a.designerSave() })
+	loadBtn := widget.NewButton("Load", func() { a.designerLoad() })
 	exportBtn := widget.NewButton("Export PNG", func() { a.designerExportPNG() })
 
-	toolbar := container.NewHBox(addText, addImage, addBarcode, addShape, delBtn, exportBtn)
+	toolbar := container.NewHBox(addText, addImage, addBarcode, addShape, delBtn,
+		widget.NewSeparator(), saveBtn, loadBtn, exportBtn)
 
 	return container.NewBorder(
 		toolbar,
@@ -90,6 +94,49 @@ func (a *App) designerLoadImage() {
 		a.refreshDesignerProps()
 	}, a.window)
 	fd.SetFilter(storage.NewExtensionFileFilter([]string{".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"}))
+	fd.Show()
+}
+
+func (a *App) designerSave() {
+	fd := dialog.NewFileSave(func(w fyne.URIWriteCloser, err error) {
+		if err != nil || w == nil {
+			return
+		}
+		defer w.Close()
+		data, merr := label.MarshalDocument(a.designDoc)
+		if merr != nil {
+			dialog.ShowError(merr, a.window)
+			return
+		}
+		if _, werr := w.Write(data); werr != nil {
+			dialog.ShowError(werr, a.window)
+		}
+	}, a.window)
+	fd.SetFileName("label.nlbl")
+	fd.Show()
+}
+
+func (a *App) designerLoad() {
+	fd := dialog.NewFileOpen(func(r fyne.URIReadCloser, err error) {
+		if err != nil || r == nil {
+			return
+		}
+		defer r.Close()
+		data, rerr := io.ReadAll(r)
+		if rerr != nil {
+			dialog.ShowError(rerr, a.window)
+			return
+		}
+		doc, derr := label.UnmarshalDocument(data)
+		if derr != nil {
+			dialog.ShowError(derr, a.window)
+			return
+		}
+		a.designDoc = doc
+		a.designCanvas.SetDocument(doc)
+		a.rebuildDesigner()
+	}, a.window)
+	fd.SetFilter(storage.NewExtensionFileFilter([]string{".nlbl", ".json"}))
 	fd.Show()
 }
 
