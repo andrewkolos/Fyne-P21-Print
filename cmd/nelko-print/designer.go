@@ -49,14 +49,20 @@ func (a *App) buildDesignerTab() fyne.CanvasObject {
 
 // renderDesignPreview re-renders the label into the shared preview without
 // touching the property strip (so it is safe to call from a property's
-// OnChanged handler while that widget has focus).
+// OnChanged handler while that widget has focus). The shared preview is shown
+// in the same landscape orientation as the editor canvas so the two match;
+// a.sourceImg keeps the portrait (print-ready) image for the Print button.
 func (a *App) renderDesignPreview() {
 	if a.designDoc == nil {
 		return
 	}
-	a.orientation = imaging.Horizontal
 	a.sourceImg = label.Render(a.designDoc, a.labelSize)
-	a.updatePreview()
+	mono := imaging.ToMonochrome(a.sourceImg, a.labelSize.PixelW, a.labelSize.PixelH, a.threshold, a.invert)
+	prev := imaging.PreviewMonochrome(mono, a.labelSize.PixelW, a.labelSize.PixelH)
+	// Rotate the portrait preview back to landscape to match the editor.
+	prev = imaging.RotatePreviewForDisplay(prev)
+	a.previewImg.Image = prev
+	a.previewImg.Refresh()
 	if a.printer != nil {
 		a.printBtn.Enable()
 	}

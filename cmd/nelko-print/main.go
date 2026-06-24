@@ -68,7 +68,7 @@ type App struct {
 func main() {
 	a := app.New()
 	w := a.NewWindow(fmt.Sprintf("%s v%s", AppName, AppVersion))
-	w.Resize(fyne.NewSize(650, 550))
+	w.Resize(fyne.NewSize(720, 660))
 
 	nelkoApp := &App{
 		fyneApp:       a,
@@ -308,7 +308,7 @@ func (a *App) buildUI() fyne.CanvasObject {
 
 	// Preview
 	a.previewImg = canvas.NewImageFromImage(nil)
-	a.previewImg.SetMinSize(fyne.NewSize(200, 300))
+	a.previewImg.SetMinSize(fyne.NewSize(150, 160))
 	a.previewImg.FillMode = canvas.ImageFillContain
 
 	// Left panel - Connection and Settings
@@ -330,12 +330,11 @@ func (a *App) buildUI() fyne.CanvasObject {
 		a.printBtn,
 	)
 
-	// Right panel
-	rightPanel := container.NewBorder(
-		tabs,
-		nil, nil, nil,
-		container.NewCenter(a.previewImg),
-	)
+	// Right panel: draggable split between the editing tabs (top) and the
+	// shared mono preview (bottom). Default gives the tabs/canvas most of the
+	// height; drag the divider to resize either side.
+	rightPanel := container.NewVSplit(tabs, container.NewCenter(a.previewImg))
+	rightPanel.SetOffset(0.66)
 
 	content := container.NewHSplit(leftPanel, rightPanel)
 	content.SetOffset(0.38)

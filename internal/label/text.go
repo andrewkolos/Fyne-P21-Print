@@ -22,7 +22,11 @@ type TextElement struct {
 }
 
 func NewText(text string) *TextElement {
-	return &TextElement{Text: text, FontSize: 24}
+	return &TextElement{
+		Base:     Base{B: Rect{0, 0, 200, 80}},
+		Text:     text,
+		FontSize: 24,
+	}
 }
 
 func (t *TextElement) Raster(scale float64) image.Image {

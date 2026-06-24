@@ -120,10 +120,13 @@ func (c *labelCanvas) Rebuild() {
 
 	for _, el := range c.doc.Elements {
 		img, x, y := label.Place(el, c.scale)
+		w := float32(img.Bounds().Dx())
+		h := float32(img.Bounds().Dy())
 		ci := canvas.NewImageFromImage(img)
-		ci.Resize(fyne.NewSize(float32(img.Bounds().Dx()), float32(img.Bounds().Dy())))
-		ci.Move(fyne.NewPos(20+float32(x), 30+float32(y)))
+		ci.FillMode = canvas.ImageFillStretch
 		di := newDraggableImage(c, el, ci)
+		di.Resize(fyne.NewSize(w, h))
+		di.Move(fyne.NewPos(20+float32(x), 30+float32(y)))
 		objs = append(objs, di)
 	}
 
@@ -196,8 +199,6 @@ type draggableImage struct {
 func newDraggableImage(c *labelCanvas, el label.Element, img *canvas.Image) *draggableImage {
 	d := &draggableImage{c: c, el: el, img: img}
 	d.ExtendBaseWidget(d)
-	d.Move(img.Position())
-	d.Resize(img.Size())
 	return d
 }
 

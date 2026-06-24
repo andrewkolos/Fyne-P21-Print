@@ -22,7 +22,11 @@ type ShapeElement struct {
 }
 
 func NewShape(kind ShapeKind) *ShapeElement {
-	return &ShapeElement{Kind: kind, StrokeWidth: 2}
+	return &ShapeElement{
+		Base:        Base{B: Rect{0, 0, 140, 30}},
+		Kind:        kind,
+		StrokeWidth: 2,
+	}
 }
 
 func (s *ShapeElement) Raster(scale float64) image.Image {
