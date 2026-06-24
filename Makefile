@@ -28,6 +28,10 @@ build-windows:
 build-linux:
 	GOOS=linux GOARCH=amd64 go build -o nelko-print ./cmd/nelko-print
 
+# Build for macOS (native build; CGO needed for Fyne, requires Xcode CLI tools)
+build-macos:
+	CGO_ENABLED=1 go build -o nelko-print ./cmd/nelko-print
+
 # Build for all platforms
 build-all: build-linux build-windows
 

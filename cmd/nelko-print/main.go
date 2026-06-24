@@ -372,8 +372,24 @@ func (a *App) refreshBluetoothDevices() {
 }
 
 func (a *App) refreshPorts() {
-	// Look for /dev/rfcomm* devices
+	// Look for /dev/rfcomm* devices (Linux)
 	ports, _ := printer.FindRFCOMMDevices()
+
+	// Add platform-detected serial ports (COM* on Windows, /dev/cu.* on macOS, etc.)
+	if platPorts, err := printer.ListSerialPorts(); err == nil {
+		for _, p := range platPorts {
+			found := false
+			for _, existing := range ports {
+				if existing == p {
+					found = true
+					break
+				}
+			}
+			if !found {
+				ports = append(ports, p)
+			}
+		}
+	}
 
 	// Also add common serial ports
 	commonPorts := []string{"/dev/rfcomm0", "/dev/rfcomm1", "/dev/ttyUSB0", "/dev/ttyACM0"}
