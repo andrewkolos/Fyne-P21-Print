@@ -496,9 +496,8 @@ func (a *App) connectBluetooth() {
 			a.statusLabel.SetText(fmt.Sprintf("Connected to %s (Battery: %d%%)", device.Name, batt))
 		}
 
-		if a.sourceImg != nil {
-			a.printBtn.Enable()
-		}
+		// Connected: allow printing. print() guards against an empty design.
+		a.printBtn.Enable()
 
 		// Refresh ports list to show the new device
 		a.refreshPorts()
@@ -533,9 +532,8 @@ func (a *App) connectManualPort() {
 		a.statusLabel.SetText(fmt.Sprintf("Connected to %s (Battery: %d%%)", port, batt))
 	}
 
-	if a.sourceImg != nil {
-		a.printBtn.Enable()
-	}
+	// Connected: allow printing. print() guards against an empty design.
+	a.printBtn.Enable()
 }
 
 func (a *App) disconnect() {
@@ -668,6 +666,7 @@ func (a *App) print() {
 
 		if err != nil {
 			a.statusLabel.SetText(fmt.Sprintf("Print error: %v", err))
+			dialog.ShowError(err, a.window)
 		} else {
 			a.statusLabel.SetText("Print complete!")
 		}

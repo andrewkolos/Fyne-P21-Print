@@ -189,10 +189,29 @@ func (p *Printer) Print(data []byte) error {
 	p.CancelPause()
 	time.Sleep(100 * time.Millisecond)
 
-	// Send print data
-	_, err := p.port.Write(data)
-	if err != nil {
-		return fmt.Errorf("print failed: %w", err)
+	// Send print data in small chunks. A single large Write over Bluetooth
+	// SPP (especially on macOS) can be silently truncated or dropped, so we
+	// pace the transfer and verify every byte is accepted.
+	const chunk = 256
+	for off := 0; off < len(data); off += chunk {
+		end := off + chunk
+		if end > len(data) {
+			end = len(data)
+		}
+		n, err := p.port.Write(data[off:end])
+		if err != nil {
+			return fmt.Errorf("print failed: %w", err)
+		}
+		if n < end-off {
+			return fmt.Errorf("print failed: short write (%d of %d bytes)", n, end-off)
+		}
+		time.Sleep(15 * time.Millisecond)
+	}
+
+	// Block until the OS has actually transmitted the buffered bytes so the
+	// caller does not report "complete" before the job leaves the machine.
+	if err := p.port.Drain(); err != nil {
+		return fmt.Errorf("print drain failed: %w", err)
 	}
 
 	return nil
