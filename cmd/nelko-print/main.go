@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
@@ -13,6 +14,7 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/storage"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
 	"nelko-print/internal/imaging"
@@ -63,6 +65,9 @@ type App struct {
 	designDoc    *label.Document
 	designCanvas *labelCanvas
 	designProps  *fyne.Container
+
+	// Connection health monitor
+	healthStop chan struct{}
 }
 
 func main() {
@@ -142,7 +147,7 @@ func (a *App) buildUI() fyne.CanvasObject {
 	// === BLUETOOTH CONNECTION SECTION ===
 	btLabel := widget.NewLabel("Bluetooth Printer:")
 	a.btDeviceSelect = widget.NewSelect([]string{}, func(s string) {})
-	a.refreshBTBtn = widget.NewButton("↻", func() {
+	a.refreshBTBtn = widget.NewButtonWithIcon("", theme.ViewRefreshIcon(), func() {
 		a.refreshBluetoothDevices()
 	})
 
@@ -167,7 +172,7 @@ func (a *App) buildUI() fyne.CanvasObject {
 		a.connectManualPort()
 	})
 
-	manualRefreshBtn := widget.NewButton("↻", func() {
+	manualRefreshBtn := widget.NewButtonWithIcon("", theme.ViewRefreshIcon(), func() {
 		a.refreshPorts()
 	})
 
@@ -387,8 +392,24 @@ func (a *App) refreshBluetoothDevices() {
 }
 
 func (a *App) refreshPorts() {
-	// Look for /dev/rfcomm* devices
+	// Look for /dev/rfcomm* devices (Linux)
 	ports, _ := printer.FindRFCOMMDevices()
+
+	// Add platform-detected serial ports (COM* on Windows, /dev/cu.* on macOS).
+	if platPorts, err := printer.ListSerialPorts(); err == nil {
+		for _, p := range platPorts {
+			found := false
+			for _, existing := range ports {
+				if existing == p {
+					found = true
+					break
+				}
+			}
+			if !found {
+				ports = append(ports, p)
+			}
+		}
+	}
 
 	// Also add common serial ports
 	commonPorts := []string{"/dev/rfcomm0", "/dev/rfcomm1", "/dev/ttyUSB0", "/dev/ttyACM0"}
@@ -498,6 +519,7 @@ func (a *App) connectBluetooth() {
 
 		// Connected: allow printing. print() guards against an empty design.
 		a.printBtn.Enable()
+		a.startHealthMonitor()
 
 		// Refresh ports list to show the new device
 		a.refreshPorts()
@@ -534,9 +556,44 @@ func (a *App) connectManualPort() {
 
 	// Connected: allow printing. print() guards against an empty design.
 	a.printBtn.Enable()
+	a.startHealthMonitor()
+}
+
+// startHealthMonitor polls the printer in the background and reflects its
+// liveness in the status label. It stops when stopHealthMonitor is called.
+func (a *App) startHealthMonitor() {
+	a.stopHealthMonitor()
+	stop := make(chan struct{})
+	a.healthStop = stop
+	go func() {
+		t := time.NewTicker(5 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-t.C:
+				p := a.printer
+				if p == nil {
+					return
+				}
+				if !p.Alive() {
+					a.statusLabel.SetText("⚠ Printer disconnected (Bluetooth link lost / powered off)")
+				}
+			}
+		}
+	}()
+}
+
+func (a *App) stopHealthMonitor() {
+	if a.healthStop != nil {
+		close(a.healthStop)
+		a.healthStop = nil
+	}
 }
 
 func (a *App) disconnect() {
+	a.stopHealthMonitor()
 	// Capture and clear references first so the UI updates immediately.
 	p := a.printer
 	conn := a.rfcommConn

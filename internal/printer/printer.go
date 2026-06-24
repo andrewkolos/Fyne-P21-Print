@@ -4,8 +4,10 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
 	"go.bug.st/serial"
@@ -21,6 +23,7 @@ type Printer struct {
 	port     serial.Port
 	portName string
 	mac      string
+	mu       sync.Mutex // serializes all port I/O
 }
 
 // FindRFCOMMDevices lists available /dev/rfcomm* devices
@@ -112,14 +115,19 @@ func Connect(portName string) (*Printer, error) {
 
 // Close closes the printer connection
 func (p *Printer) Close() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	if p.port != nil {
-		return p.port.Close()
+		err := p.port.Close()
+		p.port = nil
+		return err
 	}
 	return nil
 }
 
-// sendCommand sends a command and optionally reads response
-func (p *Printer) sendCommand(cmd string) (string, error) {
+// sendCommandLocked sends a command and optionally reads a response.
+// Caller must hold mu.
+func (p *Printer) sendCommandLocked(cmd string) (string, error) {
 	if p.port == nil {
 		return "", ErrNotConnected
 	}
@@ -142,7 +150,9 @@ func (p *Printer) sendCommand(cmd string) (string, error) {
 
 // GetBattery queries the battery level
 func (p *Printer) GetBattery() (int, error) {
-	resp, err := p.sendCommand("BATTERY?")
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	resp, err := p.sendCommandLocked("BATTERY?")
 	if err != nil {
 		return 0, err
 	}
@@ -158,17 +168,34 @@ func (p *Printer) GetBattery() (int, error) {
 
 // GetConfig queries printer configuration
 func (p *Printer) GetConfig() (string, error) {
-	return p.sendCommand("CONFIG?")
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.sendCommandLocked("CONFIG?")
 }
 
 // CancelPause sends escape sequence to cancel pause status
 func (p *Printer) CancelPause() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.port == nil {
+		return ErrNotConnected
+	}
+	return p.cancelPauseLocked()
+}
+
+// cancelPauseLocked sends the cancel-pause escape sequence. Caller must hold mu.
+func (p *Printer) cancelPauseLocked() error {
 	_, err := p.port.Write([]byte("\x1b!o"))
 	return err
 }
 
 // CheckReady checks if printer is ready
 func (p *Printer) CheckReady() (bool, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.port == nil {
+		return false, ErrNotConnected
+	}
 	_, err := p.port.Write([]byte("\x1b!?"))
 	if err != nil {
 		return false, err
@@ -179,39 +206,46 @@ func (p *Printer) CheckReady() (bool, error) {
 	return err == nil, err
 }
 
+// Ping checks the printer is alive by sending a status query and waiting for
+// a response. A bare Write always "succeeds" over an open serial port even if
+// the device is off, so reading back is the only reliable liveness signal.
+func (p *Printer) Ping() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.port == nil {
+		return ErrNotConnected
+	}
+	_ = p.port.ResetInputBuffer()
+	if _, err := p.port.Write([]byte("BATTERY?\r\n")); err != nil {
+		return fmt.Errorf("write failed: %w", err)
+	}
+	buf := make([]byte, 32)
+	n, err := p.port.Read(buf) // read timeout was set in Connect
+	if err != nil {
+		return fmt.Errorf("read failed: %w", err)
+	}
+	if n == 0 {
+		return errors.New("no response from device (powered off or out of range)")
+	}
+	return nil
+}
+
 // Print sends raw print data to the printer
 func (p *Printer) Print(data []byte) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	if p.port == nil {
 		return ErrNotConnected
 	}
 
 	// Cancel any pause state first
-	p.CancelPause()
+	p.cancelPauseLocked()
 	time.Sleep(100 * time.Millisecond)
 
-	// Send print data in small chunks. A single large Write over Bluetooth
-	// SPP (especially on macOS) can be silently truncated or dropped, so we
-	// pace the transfer and verify every byte is accepted.
-	const chunk = 256
-	for off := 0; off < len(data); off += chunk {
-		end := off + chunk
-		if end > len(data) {
-			end = len(data)
-		}
-		n, err := p.port.Write(data[off:end])
-		if err != nil {
-			return fmt.Errorf("print failed: %w", err)
-		}
-		if n < end-off {
-			return fmt.Errorf("print failed: short write (%d of %d bytes)", n, end-off)
-		}
-		time.Sleep(15 * time.Millisecond)
-	}
-
-	// Block until the OS has actually transmitted the buffered bytes so the
-	// caller does not report "complete" before the job leaves the machine.
-	if err := p.port.Drain(); err != nil {
-		return fmt.Errorf("print drain failed: %w", err)
+	// Send print data
+	_, err := p.port.Write(data)
+	if err != nil {
+		return fmt.Errorf("print failed: %w", err)
 	}
 
 	return nil
@@ -220,4 +254,20 @@ func (p *Printer) Print(data []byte) error {
 // PortName returns the current port name
 func (p *Printer) PortName() string {
 	return p.portName
+}
+
+// Alive reports whether the serial device still exists. On macOS/Linux a
+// Bluetooth serial node disappears when the device truly disconnects, so this
+// is a reliable liveness signal that (unlike a status read) does not require
+// the printer to answer queries it may not support.
+func (p *Printer) Alive() bool {
+	if p.portName == "" {
+		return false
+	}
+	// COM ports on Windows are not filesystem paths; treat as always present.
+	if strings.HasPrefix(strings.ToUpper(p.portName), "COM") || strings.HasPrefix(p.portName, `\\.\`) {
+		return true
+	}
+	_, err := os.Stat(p.portName)
+	return err == nil
 }
