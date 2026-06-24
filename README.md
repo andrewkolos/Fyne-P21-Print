@@ -124,6 +124,11 @@ sudo rfcomm connect /dev/rfcomm0 XX:XX:XX:XX:XX:XX 1
 
 ## Features
 
+- **Designer mode (WYSIWYG)**: Place and arrange multiple elements on a visual
+  label - text, B/W graphics, barcodes (Aztec/QR/DataMatrix/Code128), and
+  shapes. Drag to move, drag the corner handle to resize, drag the top handle
+  to rotate in 45-degree steps. Save/load designs as `.nlbl` files and export
+  the composed label as PNG.
 - **Image printing**: Load PNG, JPG, GIF, BMP, WebP images
 - **Text labels**: Type text directly with adjustable font size
 - **Orientation**: Horizontal or Vertical text layout
