@@ -80,8 +80,12 @@ func (c *labelCanvas) DeleteSelected() {
 }
 
 func (c *labelCanvas) selectElement(el label.Element) {
+	if c.selected == el {
+		return
+	}
 	c.selected = el
 	c.Rebuild()
+	c.fire()
 }
 
 func (c *labelCanvas) fire() {
@@ -167,8 +171,12 @@ func (c *labelCanvas) MinSize() fyne.Size {
 
 // Tapped on empty canvas deselects.
 func (c *labelCanvas) Tapped(_ *fyne.PointEvent) {
+	if c.selected == nil {
+		return
+	}
 	c.selected = nil
 	c.Rebuild()
+	c.fire()
 }
 
 var _ fyne.Tappable = (*labelCanvas)(nil)

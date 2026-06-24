@@ -16,6 +16,7 @@ import (
 	"fyne.io/fyne/v2/widget"
 
 	"nelko-print/internal/imaging"
+	"nelko-print/internal/label"
 	"nelko-print/internal/printer"
 	"nelko-print/internal/tspl"
 )
@@ -57,6 +58,11 @@ type App struct {
 	fontSize      float64
 	textInvert    bool
 	wordBreakOnly bool
+
+	// Designer mode
+	designDoc    *label.Document
+	designCanvas *labelCanvas
+	designProps  *fyne.Container
 }
 
 func main() {
@@ -76,6 +82,7 @@ func main() {
 		orientation:   imaging.Horizontal,
 		textInvert:    false,
 		wordBreakOnly: false,
+		designDoc:     &label.Document{},
 	}
 
 	// Set up menu
@@ -185,6 +192,9 @@ func (a *App) buildUI() fyne.CanvasObject {
 		for _, size := range tspl.AllSizes {
 			if size.Name == s {
 				a.labelSize = size
+				if a.designCanvas != nil {
+					a.designCanvas.SetSize(size)
+				}
 				a.updatePreview()
 				break
 			}
@@ -293,6 +303,7 @@ func (a *App) buildUI() fyne.CanvasObject {
 	tabs := container.NewAppTabs(
 		container.NewTabItem("Image", imageTab),
 		container.NewTabItem("Text", textTab),
+		container.NewTabItem("Designer", a.buildDesignerTab()),
 	)
 
 	// Preview
