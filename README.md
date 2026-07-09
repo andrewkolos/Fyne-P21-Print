@@ -27,13 +27,25 @@ Here are some vibe docs, I really don't expect anyone to use it but if you stumb
 3. Run the app and select your printer's COM port
 4. Print!
 
+### macOS
+```bash
+# Build (requires Go 1.22+ and Xcode Command Line Tools: xcode-select --install)
+make build-macos
+
+# Run
+./nelko-print
+```
+1. Pair your Nelko P21 via System Settings > Bluetooth
+2. Run the app and select your printer (shows up as a `/dev/cu.*` port)
+3. Print!
+
 ## Supported Platforms
 
 | Platform | Status | Notes |
 |----------|--------|-------|
 | Linux (x64) | ✅ Full support | Auto Bluetooth connection via rfcomm |
 | Windows (x64) | ✅ Full support | Uses COM ports (auto-detected when BT paired) |
-| macOS | ❌ Not tested | PRs welcome! |
+| macOS (Apple Silicon / Intel) | ✅ Supported | Paired BT printer appears as a `/dev/cu.*` serial port |
 
 ## Prerequisites
 
@@ -52,6 +64,11 @@ sudo usermod -aG dialout $USER
 ### Windows
 - Go 1.22+ (for building from source)
 - No additional dependencies for running pre-built exe
+
+### macOS
+- Go 1.22+
+- Xcode Command Line Tools (`xcode-select --install`) - needed by Fyne (CGO)
+- No serial driver needed; macOS exposes the paired BT printer as `/dev/cu.*`
 
 ## Building
 
