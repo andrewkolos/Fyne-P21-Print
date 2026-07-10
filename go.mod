@@ -4,6 +4,7 @@ go 1.22
 
 require (
 	fyne.io/fyne/v2 v2.4.4
+	github.com/boombuler/barcode v1.1.0
 	github.com/golang/freetype v0.0.0-20170609003504-e2365dfdc4a0
 	go.bug.st/serial v1.6.2
 	golang.org/x/image v0.15.0

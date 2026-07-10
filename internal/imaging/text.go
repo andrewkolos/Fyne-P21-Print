@@ -244,3 +244,16 @@ func RotatePreviewForDisplay(img image.Image) image.Image {
 func IsWhitespace(r rune) bool {
 	return unicode.IsSpace(r)
 }
+
+// MeasureString returns the pixel width of s rendered with face.
+func MeasureString(face font.Face, s string) int { return measureString(face, s) }
+
+// WrapText wraps text to maxWidth, breaking anywhere.
+func WrapText(text string, face font.Face, maxWidth int) []string {
+	return wrapText(text, face, maxWidth)
+}
+
+// WrapWordOnly wraps text to maxWidth, breaking only at spaces.
+func WrapWordOnly(text string, face font.Face, maxWidth int) []string {
+	return wrapTextWordOnly(text, face, maxWidth)
+}

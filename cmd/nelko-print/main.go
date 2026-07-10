@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
@@ -13,9 +14,11 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/storage"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
 	"nelko-print/internal/imaging"
+	"nelko-print/internal/label"
 	"nelko-print/internal/printer"
 	"nelko-print/internal/tspl"
 )
@@ -57,12 +60,20 @@ type App struct {
 	fontSize      float64
 	textInvert    bool
 	wordBreakOnly bool
+
+	// Designer mode
+	designDoc    *label.Document
+	designCanvas *labelCanvas
+	designProps  *fyne.Container
+
+	// Connection health monitor
+	healthStop chan struct{}
 }
 
 func main() {
 	a := app.New()
 	w := a.NewWindow(fmt.Sprintf("%s v%s", AppName, AppVersion))
-	w.Resize(fyne.NewSize(650, 550))
+	w.Resize(fyne.NewSize(720, 660))
 
 	nelkoApp := &App{
 		fyneApp:       a,
@@ -76,6 +87,7 @@ func main() {
 		orientation:   imaging.Horizontal,
 		textInvert:    false,
 		wordBreakOnly: false,
+		designDoc:     &label.Document{},
 	}
 
 	// Set up menu
@@ -135,7 +147,7 @@ func (a *App) buildUI() fyne.CanvasObject {
 	// === BLUETOOTH CONNECTION SECTION ===
 	btLabel := widget.NewLabel("Bluetooth Printer:")
 	a.btDeviceSelect = widget.NewSelect([]string{}, func(s string) {})
-	a.refreshBTBtn = widget.NewButton("↻", func() {
+	a.refreshBTBtn = widget.NewButtonWithIcon("", theme.ViewRefreshIcon(), func() {
 		a.refreshBluetoothDevices()
 	})
 
@@ -160,7 +172,7 @@ func (a *App) buildUI() fyne.CanvasObject {
 		a.connectManualPort()
 	})
 
-	manualRefreshBtn := widget.NewButton("↻", func() {
+	manualRefreshBtn := widget.NewButtonWithIcon("", theme.ViewRefreshIcon(), func() {
 		a.refreshPorts()
 	})
 
@@ -185,6 +197,9 @@ func (a *App) buildUI() fyne.CanvasObject {
 		for _, size := range tspl.AllSizes {
 			if size.Name == s {
 				a.labelSize = size
+				if a.designCanvas != nil {
+					a.designCanvas.SetSize(size)
+				}
 				a.updatePreview()
 				break
 			}
@@ -293,11 +308,17 @@ func (a *App) buildUI() fyne.CanvasObject {
 	tabs := container.NewAppTabs(
 		container.NewTabItem("Image", imageTab),
 		container.NewTabItem("Text", textTab),
+		container.NewTabItem("Designer", a.buildDesignerTab()),
 	)
+	tabs.OnSelected = func(ti *container.TabItem) {
+		if ti.Text == "Designer" {
+			a.renderDesignPreview()
+		}
+	}
 
 	// Preview
 	a.previewImg = canvas.NewImageFromImage(nil)
-	a.previewImg.SetMinSize(fyne.NewSize(200, 300))
+	a.previewImg.SetMinSize(fyne.NewSize(150, 160))
 	a.previewImg.FillMode = canvas.ImageFillContain
 
 	// Left panel - Connection and Settings
@@ -319,12 +340,11 @@ func (a *App) buildUI() fyne.CanvasObject {
 		a.printBtn,
 	)
 
-	// Right panel
-	rightPanel := container.NewBorder(
-		tabs,
-		nil, nil, nil,
-		container.NewCenter(a.previewImg),
-	)
+	// Right panel: draggable split between the editing tabs (top) and the
+	// shared mono preview (bottom). Default gives the tabs/canvas most of the
+	// height; drag the divider to resize either side.
+	rightPanel := container.NewVSplit(tabs, container.NewCenter(a.previewImg))
+	rightPanel.SetOffset(0.66)
 
 	content := container.NewHSplit(leftPanel, rightPanel)
 	content.SetOffset(0.38)
@@ -497,9 +517,9 @@ func (a *App) connectBluetooth() {
 			a.statusLabel.SetText(fmt.Sprintf("Connected to %s (Battery: %d%%)", device.Name, batt))
 		}
 
-		if a.sourceImg != nil {
-			a.printBtn.Enable()
-		}
+		// Connected: allow printing. print() guards against an empty design.
+		a.printBtn.Enable()
+		a.startHealthMonitor()
 
 		// Refresh ports list to show the new device
 		a.refreshPorts()
@@ -534,20 +554,64 @@ func (a *App) connectManualPort() {
 		a.statusLabel.SetText(fmt.Sprintf("Connected to %s (Battery: %d%%)", port, batt))
 	}
 
-	if a.sourceImg != nil {
-		a.printBtn.Enable()
+	// Connected: allow printing. print() guards against an empty design.
+	a.printBtn.Enable()
+	a.startHealthMonitor()
+}
+
+// startHealthMonitor polls the printer in the background and reflects its
+// liveness in the status label. It stops when stopHealthMonitor is called.
+func (a *App) startHealthMonitor() {
+	a.stopHealthMonitor()
+	stop := make(chan struct{})
+	a.healthStop = stop
+	go func() {
+		t := time.NewTicker(5 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-t.C:
+				p := a.printer
+				if p == nil {
+					return
+				}
+				if !p.Alive() {
+					a.statusLabel.SetText("⚠ Printer disconnected (Bluetooth link lost / powered off)")
+				}
+			}
+		}
+	}()
+}
+
+func (a *App) stopHealthMonitor() {
+	if a.healthStop != nil {
+		close(a.healthStop)
+		a.healthStop = nil
 	}
 }
 
 func (a *App) disconnect() {
-	if a.printer != nil {
-		a.printer.Close()
-		a.printer = nil
-	}
+	a.stopHealthMonitor()
+	// Capture and clear references first so the UI updates immediately.
+	p := a.printer
+	conn := a.rfcommConn
+	a.printer = nil
+	a.rfcommConn = nil
 
-	if a.rfcommConn != nil {
-		a.rfcommConn.Close()
-		a.rfcommConn = nil
+	// Closing the serial port can block in the OS driver (notably on macOS
+	// when the Bluetooth link is already gone). Do it off the UI thread so
+	// the app does not freeze.
+	if p != nil || conn != nil {
+		go func() {
+			if p != nil {
+				p.Close()
+			}
+			if conn != nil {
+				conn.Close()
+			}
+		}()
 	}
 
 	a.connectBtn.SetText("Connect")
@@ -659,6 +723,7 @@ func (a *App) print() {
 
 		if err != nil {
 			a.statusLabel.SetText(fmt.Sprintf("Print error: %v", err))
+			dialog.ShowError(err, a.window)
 		} else {
 			a.statusLabel.SetText("Print complete!")
 		}
