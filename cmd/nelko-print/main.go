@@ -63,6 +63,7 @@ type App struct {
 
 	// Widgets that need updating
 	statusLabel    *widget.Label
+	batteryLabel   *widget.Label
 	connectBtn     *widget.Button
 	printBtn       *widget.Button
 	btDeviceSelect *widget.Select
@@ -161,6 +162,7 @@ func (a *App) cleanup() {
 func (a *App) buildUI() fyne.CanvasObject {
 	// Status bar
 	a.statusLabel = widget.NewLabel("Not connected")
+	a.batteryLabel = widget.NewLabel("")
 
 	// === BLUETOOTH CONNECTION SECTION ===
 	btLabel := widget.NewLabel("Bluetooth Printer:")
@@ -359,7 +361,7 @@ func (a *App) buildUI() fyne.CanvasObject {
 
 	return container.NewBorder(
 		nil,
-		container.NewHBox(a.statusLabel),
+		container.NewBorder(nil, nil, nil, a.batteryLabel, a.statusLabel),
 		nil, nil,
 		content,
 	)
@@ -520,11 +522,6 @@ func (a *App) connectBluetooth() {
 		a.connectBtn.Enable()
 		a.statusLabel.SetText(fmt.Sprintf("Connected to %s via %s", device.Name, conn.DevicePath))
 
-		// Try to get battery
-		if batt, err := p.GetBattery(); err == nil {
-			a.statusLabel.SetText(fmt.Sprintf("Connected to %s (Battery: %d%%)", device.Name, batt))
-		}
-
 		// Connected: allow printing. print() guards against an empty design.
 		a.printBtn.Enable()
 		a.startHealthMonitor()
@@ -557,11 +554,6 @@ func (a *App) connectManualPort() {
 	a.connectBtn.SetText("Disconnect")
 	a.statusLabel.SetText(fmt.Sprintf("Connected to %s", port))
 
-	// Try to get battery
-	if batt, err := p.GetBattery(); err == nil {
-		a.statusLabel.SetText(fmt.Sprintf("Connected to %s (Battery: %d%%)", port, batt))
-	}
-
 	// Connected: allow printing. print() guards against an empty design.
 	a.printBtn.Enable()
 	a.startHealthMonitor()
@@ -574,23 +566,51 @@ func (a *App) startHealthMonitor() {
 	stop := make(chan struct{})
 	a.healthStop = stop
 	go func() {
-		t := time.NewTicker(5 * time.Second)
+		// Battery right away, then every minute. The query doubles as the
+		// liveness check: Alive() cannot tell on Windows, where COM ports
+		// stay open after the printer powers off.
+		t := time.NewTicker(time.Minute)
 		defer t.Stop()
+		misses := 0
 		for {
+			p := a.printer
+			if p == nil {
+				return
+			}
+			if !p.Alive() {
+				a.statusLabel.SetText("⚠ Printer disconnected (Bluetooth link lost / powered off)")
+			}
+			if b, err := p.GetBattery(); err == nil {
+				misses = 0
+				a.showBattery(b)
+			} else if misses++; misses >= 2 {
+				a.batteryLabel.SetText("Battery: no reply")
+			}
 			select {
 			case <-stop:
 				return
 			case <-t.C:
-				p := a.printer
-				if p == nil {
-					return
-				}
-				if !p.Alive() {
-					a.statusLabel.SetText("⚠ Printer disconnected (Bluetooth link lost / powered off)")
-				}
 			}
 		}
 	}()
+}
+
+func (a *App) showBattery(b printer.Battery) {
+	switch {
+	case b.Charging:
+		a.batteryLabel.SetText(fmt.Sprintf("Battery %d%% (charging)", b.Level))
+	case b.Level >= 99:
+		// Also what it reports on USB power without the charging flag.
+		a.batteryLabel.SetText("Battery 99%+")
+	default:
+		a.batteryLabel.SetText(fmt.Sprintf("Battery %d%%", b.Level))
+	}
+	if b.Level <= 15 && !b.Charging {
+		a.batteryLabel.Importance = widget.DangerImportance
+	} else {
+		a.batteryLabel.Importance = widget.MediumImportance
+	}
+	a.batteryLabel.Refresh()
 }
 
 func (a *App) stopHealthMonitor() {
@@ -626,6 +646,7 @@ func (a *App) disconnect() {
 	a.btDeviceSelect.Enable()
 	a.refreshBTBtn.Enable()
 	a.statusLabel.SetText("Disconnected")
+	a.batteryLabel.SetText("")
 	a.printBtn.Disable()
 }
 

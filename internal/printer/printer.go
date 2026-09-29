@@ -2,6 +2,7 @@ package printer
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -73,15 +74,15 @@ func ConnectRFCOMM(mac string, channel int) (string, error) {
 		if err := cmd.Start(); err != nil {
 			continue
 		}
-		
+
 		// Give it a moment to connect
 		time.Sleep(2 * time.Second)
-		
+
 		// Check if device exists now
 		if _, err := exec.Command("test", "-e", devPath).Output(); err == nil {
 			return devPath, nil
 		}
-		
+
 		cmd.Process.Kill()
 		devNum++
 	}
@@ -148,22 +149,55 @@ func (p *Printer) sendCommandLocked(cmd string) (string, error) {
 	return strings.TrimSpace(response), nil
 }
 
-// GetBattery queries the battery level
-func (p *Printer) GetBattery() (int, error) {
+// Battery is the printer's reported charge state.
+type Battery struct {
+	Level    int // percent; the printer reports 99 while on USB power
+	Charging bool
+}
+
+// GetBattery queries the battery level. The reply is binary:
+// "BATTERY " + level (BCD, 0x99 = 99%) + charging flag + CRLF, so it is
+// read by length rather than as a line (a level of 10% is a '\n' byte).
+func (p *Printer) GetBattery() (Battery, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	resp, err := p.sendCommandLocked("BATTERY?")
-	if err != nil {
-		return 0, err
+	if p.port == nil {
+		return Battery{}, ErrNotConnected
+	}
+	_ = p.port.ResetInputBuffer()
+	if _, err := p.port.Write([]byte("BATTERY?\r\n")); err != nil {
+		return Battery{}, fmt.Errorf("write failed: %w", err)
 	}
 
-	// Response format: "BATTERY" followed by bytes
-	if len(resp) > 7 {
-		// First byte after "BATTERY" is percentage
-		return int(resp[7]), nil
+	const prefix = "BATTERY "
+	resp := make([]byte, 0, len(prefix)+4)
+	buf := make([]byte, 16)
+	deadline := time.Now().Add(3 * time.Second)
+	for len(resp) < len(prefix)+2 && time.Now().Before(deadline) {
+		n, err := p.port.Read(buf) // read timeout was set in Connect
+		if err != nil {
+			return Battery{}, fmt.Errorf("read failed: %w", err)
+		}
+		if n == 0 {
+			break
+		}
+		resp = append(resp, buf[:n]...)
 	}
+	return parseBattery(resp)
+}
 
-	return 0, errors.New("invalid battery response")
+func parseBattery(resp []byte) (Battery, error) {
+	const prefix = "BATTERY "
+	i := bytes.Index(resp, []byte(prefix))
+	if i < 0 || len(resp) < i+len(prefix)+2 {
+		return Battery{}, fmt.Errorf("invalid battery response % x", resp)
+	}
+	level, charging := resp[i+len(prefix)], resp[i+len(prefix)+1]
+	hi, lo := int(level>>4), int(level&0x0F)
+	if hi > 9 || lo > 9 {
+		return Battery{}, fmt.Errorf("invalid battery level 0x%02x", level)
+	}
+	return Battery{Level: hi*10 + lo, Charging: charging != 0}, nil
 }
 
 // GetConfig queries printer configuration
