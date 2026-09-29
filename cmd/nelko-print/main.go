@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -36,6 +37,13 @@ type App struct {
 	sourceImg  image.Image // what Print sends; follows the active tab
 	loadedImg  image.Image // last image loaded on the Image tab
 	previewImg *canvas.Image
+
+	// previewDots is the current preview at printer resolution (one pixel
+	// per dot); previewImg shows it simulated at actual size.
+	previewMu      sync.Mutex
+	previewDots    image.Image
+	previewPxPerMM float64
+	previewScale   float32
 
 	// activeTab is the title of the selected editing tab. The shared preview
 	// and the Print button follow it, so each tab's settings are re-applied
@@ -312,9 +320,9 @@ func (a *App) buildUI() fyne.CanvasObject {
 
 	// Preview
 	a.previewImg = canvas.NewImageFromImage(nil)
-	a.previewImg.SetMinSize(fyne.NewSize(150, 100))
+	a.previewImg.SetMinSize(fyne.NewSize(150, 60))
 	a.previewImg.FillMode = canvas.ImageFillContain
-	a.previewImg.ScaleMode = canvas.ImageScalePixels // crisp printer dots
+	go a.watchPreviewScreen()
 
 	// Left panel - Connection and Settings
 	leftPanel := container.NewVBox(
@@ -338,7 +346,7 @@ func (a *App) buildUI() fyne.CanvasObject {
 	// Right panel: draggable split between the editing tabs (top) and the
 	// shared mono preview (bottom). Default gives the tabs/canvas most of the
 	// height; drag the divider to resize either side.
-	rightPanel := container.NewVSplit(tabs, container.NewPadded(a.previewImg))
+	rightPanel := container.NewVSplit(tabs, container.NewCenter(a.previewImg))
 	rightPanel.SetOffset(0.66)
 
 	content := container.NewHSplit(leftPanel, rightPanel)
@@ -669,8 +677,7 @@ func (a *App) clearPreview() {
 	if a.previewImg == nil {
 		return
 	}
-	a.previewImg.Image = nil
-	a.previewImg.Refresh()
+	a.showPreview(nil)
 }
 
 func (a *App) updatePreview() {
@@ -688,8 +695,56 @@ func (a *App) updatePreview() {
 		preview = imaging.RotatePreviewForDisplay(preview)
 	}
 
-	a.previewImg.Image = preview
+	a.showPreview(preview)
+}
+
+// showPreview displays dots (one pixel per printer dot, or nil to clear) as
+// a simulated print at actual size on the current monitor.
+func (a *App) showPreview(dots image.Image) {
+	a.previewMu.Lock()
+	defer a.previewMu.Unlock()
+	a.previewDots = dots
+	a.renderPreviewLocked()
+}
+
+func (a *App) renderPreviewLocked() {
+	scale := a.window.Canvas().Scale()
+	pxPerMM := screenPxPerMM()
+	if pxPerMM <= 0 {
+		pxPerMM = float64(scale) * 96 / 25.4 // Windows' nominal DPI
+	}
+	a.previewPxPerMM, a.previewScale = pxPerMM, scale
+
+	if a.previewDots == nil {
+		a.previewImg.Image = nil
+		a.previewImg.SetMinSize(fyne.NewSize(150, 60))
+		a.previewImg.Refresh()
+		return
+	}
+	// The label is as long as the print area in whichever direction it runs.
+	wMM, hMM := a.labelSize.Width, a.labelSize.Height
+	if b := a.previewDots.Bounds(); b.Dx() > b.Dy() {
+		wMM, hMM = hMM, wMM
+	}
+	img := imaging.SimulatePrint(a.previewDots, wMM, hMM, pxPerMM)
+	// Fyne draws one unit as Scale() physical pixels, so this is 1:1.
+	b := img.Bounds()
+	a.previewImg.Image = img
+	a.previewImg.SetMinSize(fyne.NewSize(float32(b.Dx())/scale, float32(b.Dy())/scale))
 	a.previewImg.Refresh()
+}
+
+// watchPreviewScreen re-renders the preview when the window moves to a
+// monitor with a different pixel density or scale, keeping it actual size.
+func (a *App) watchPreviewScreen() {
+	for range time.Tick(time.Second) {
+		pxPerMM, scale := screenPxPerMM(), a.window.Canvas().Scale()
+		a.previewMu.Lock()
+		if (pxPerMM > 0 && pxPerMM != a.previewPxPerMM) || scale != a.previewScale {
+			a.renderPreviewLocked()
+		}
+		a.previewMu.Unlock()
+	}
 }
 
 // textOrientation maps the Text tab's dropdown to an imaging.Orientation.

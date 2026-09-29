@@ -65,8 +65,7 @@ func (a *App) renderDesignPreview() {
 	prev := imaging.PreviewMonochrome(mono, a.labelSize.PixelW, a.labelSize.PixelH)
 	// Rotate the portrait preview back to landscape to match the editor.
 	prev = imaging.RotatePreviewForDisplay(prev)
-	a.previewImg.Image = prev
-	a.previewImg.Refresh()
+	a.showPreview(prev)
 	if a.printer != nil {
 		a.printBtn.Enable()
 	}
