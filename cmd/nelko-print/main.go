@@ -90,7 +90,7 @@ func main() {
 		copies:        1,
 		invert:        false,
 		fontSize:      24,
-		orientation:   imaging.Horizontal,
+		orientation:   imaging.Vertical, // "Horizontal" in the UI, see textOrientation
 		textInvert:    false,
 		wordBreakOnly: false,
 		designDoc:     &label.Document{},
@@ -273,11 +273,7 @@ func (a *App) buildUI() fyne.CanvasObject {
 	}
 
 	orientationSelect := widget.NewSelect([]string{"Horizontal", "Vertical"}, func(s string) {
-		if s == "Vertical" {
-			a.orientation = imaging.Vertical
-		} else {
-			a.orientation = imaging.Horizontal
-		}
+		a.orientation = textOrientation(s)
 		a.updateTextPreview()
 	})
 	orientationSelect.SetSelected("Horizontal")
@@ -693,14 +689,26 @@ func (a *App) updatePreview() {
 	mono := imaging.ToMonochrome(a.sourceImg, a.labelSize.PixelW, a.labelSize.PixelH, a.threshold, a.invert)
 	preview := imaging.PreviewMonochrome(mono, a.labelSize.PixelW, a.labelSize.PixelH)
 
-	// For vertical text, rotate the preview so the text is readable on screen.
-	// The orientation is a Text tab setting; loaded images print as-is.
-	if a.activeTab == "Text" && a.orientation == imaging.Vertical {
+	// Show text labels landscape, the way they are read and the way the
+	// Designer shows them. Loaded images are previewed as they print.
+	if a.activeTab == "Text" {
 		preview = imaging.RotatePreviewForDisplay(preview)
 	}
 
 	a.previewImg.Image = preview
 	a.previewImg.Refresh()
+}
+
+// textOrientation maps the Text tab's dropdown to an imaging.Orientation.
+// The dropdown names orientation as the label is read (landscape, like the
+// Designer canvas): "Horizontal" runs the text along the label's length.
+// imaging.Orientation is relative to the print head, which spans the label's
+// short side, so the two names are swapped.
+func textOrientation(s string) imaging.Orientation {
+	if s == "Vertical" {
+		return imaging.Horizontal
+	}
+	return imaging.Vertical
 }
 
 func (a *App) updateTextPreview() {
