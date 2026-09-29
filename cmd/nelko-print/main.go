@@ -1,6 +1,7 @@
 package main
 
 import (
+	_ "embed"
 	"fmt"
 	"image"
 	"net/url"
@@ -23,6 +24,9 @@ import (
 	"nelko-print/internal/printer"
 	"nelko-print/internal/tspl"
 )
+
+//go:embed icon.png
+var appIcon []byte
 
 const (
 	AppVersion = "1.3.0"
@@ -85,6 +89,7 @@ type App struct {
 
 func main() {
 	a := app.New()
+	a.SetIcon(fyne.NewStaticResource("icon.png", appIcon))
 	w := a.NewWindow(fmt.Sprintf("%s v%s", AppName, AppVersion))
 	w.Resize(fyne.NewSize(720, 660))
 
