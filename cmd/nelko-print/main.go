@@ -33,8 +33,14 @@ type App struct {
 	window     fyne.Window
 	printer    *printer.Printer
 	rfcommConn *printer.RFCOMMConnection
-	sourceImg  image.Image
+	sourceImg  image.Image // what Print sends; follows the active tab
+	loadedImg  image.Image // last image loaded on the Image tab
 	previewImg *canvas.Image
+
+	// activeTab is the title of the selected editing tab. The shared preview
+	// and the Print button follow it, so each tab's settings are re-applied
+	// when it is selected.
+	activeTab string
 
 	// Settings
 	labelSize tspl.LabelSize
@@ -88,6 +94,7 @@ func main() {
 		textInvert:    false,
 		wordBreakOnly: false,
 		designDoc:     &label.Document{},
+		activeTab:     "Image",
 	}
 
 	// Set up menu
@@ -200,7 +207,7 @@ func (a *App) buildUI() fyne.CanvasObject {
 				if a.designCanvas != nil {
 					a.designCanvas.SetSize(size)
 				}
-				a.updatePreview()
+				a.refreshActivePreview()
 				break
 			}
 		}
@@ -311,9 +318,8 @@ func (a *App) buildUI() fyne.CanvasObject {
 		container.NewTabItem("Designer", a.buildDesignerTab()),
 	)
 	tabs.OnSelected = func(ti *container.TabItem) {
-		if ti.Text == "Designer" {
-			a.renderDesignPreview()
-		}
+		a.activeTab = ti.Text
+		a.refreshActivePreview()
 	}
 
 	// Preview
@@ -638,6 +644,7 @@ func (a *App) loadImage() {
 			return
 		}
 
+		a.loadedImg = img
 		a.sourceImg = img
 		a.updatePreview()
 
@@ -650,6 +657,33 @@ func (a *App) loadImage() {
 	fd.Show()
 }
 
+// refreshActivePreview re-renders the shared preview (and a.sourceImg, which
+// Print uses) from the selected tab's own content and settings.
+func (a *App) refreshActivePreview() {
+	switch a.activeTab {
+	case "Text":
+		a.updateTextPreview()
+	case "Designer":
+		a.renderDesignPreview()
+	default:
+		a.sourceImg = a.loadedImg
+		if a.sourceImg == nil {
+			a.clearPreview()
+			return
+		}
+		a.updatePreview()
+	}
+}
+
+func (a *App) clearPreview() {
+	// sizeSelect.SetSelected fires before the preview widget exists.
+	if a.previewImg == nil {
+		return
+	}
+	a.previewImg.Image = nil
+	a.previewImg.Refresh()
+}
+
 func (a *App) updatePreview() {
 	if a.sourceImg == nil {
 		return
@@ -659,8 +693,9 @@ func (a *App) updatePreview() {
 	mono := imaging.ToMonochrome(a.sourceImg, a.labelSize.PixelW, a.labelSize.PixelH, a.threshold, a.invert)
 	preview := imaging.PreviewMonochrome(mono, a.labelSize.PixelW, a.labelSize.PixelH)
 
-	// For vertical orientation, rotate the preview so text is readable on screen
-	if a.orientation == imaging.Vertical {
+	// For vertical text, rotate the preview so the text is readable on screen.
+	// The orientation is a Text tab setting; loaded images print as-is.
+	if a.activeTab == "Text" && a.orientation == imaging.Vertical {
 		preview = imaging.RotatePreviewForDisplay(preview)
 	}
 
@@ -669,8 +704,15 @@ func (a *App) updatePreview() {
 }
 
 func (a *App) updateTextPreview() {
+	// Text tab widgets fire their callbacks while the UI is still being built
+	// (e.g. orientationSelect.SetSelected); only render when the tab is shown.
+	if a.activeTab != "Text" {
+		return
+	}
 	text := a.textEntry.Text
 	if text == "" {
+		a.sourceImg = nil
+		a.clearPreview()
 		return
 	}
 
