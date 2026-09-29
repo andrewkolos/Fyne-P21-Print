@@ -31,4 +31,4 @@ go.work.sum
 # .idea/
 # .vscode/
 .claude/settings.local.json
-nelko-print
+/nelko-print

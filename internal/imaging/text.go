@@ -23,11 +23,18 @@ const (
 
 // TextOptions configures text rendering
 type TextOptions struct {
-	FontSize      float64
+	FontSize      float64 // points; <= 0 picks the largest size that fits
 	Orientation   Orientation
 	Invert        bool // White text on black background
 	WordBreakOnly bool // Only break lines on spaces, not mid-word
 }
+
+const (
+	textDPI     = 203 // printer resolution
+	textMarginX = 5   // px kept clear at each end of a line
+	textMarginY = 4   // px kept clear above and below the text block
+	minFontSize = 4.0
+)
 
 // RenderText creates an image from text (legacy wrapper)
 func RenderText(text string, width, height int, fontSize float64, orientation Orientation) (image.Image, error) {
@@ -37,9 +44,10 @@ func RenderText(text string, width, height int, fontSize float64, orientation Or
 	})
 }
 
-// RenderTextWithOptions creates an image from text with full options
+// RenderTextWithOptions creates an image from text with full options. The
+// text block is centered on its ink (not its line boxes), so auto-fitted text
+// sits visually centered and uses the whole label.
 func RenderTextWithOptions(text string, width, height int, opts TextOptions) (image.Image, error) {
-	// Load font
 	f, err := truetype.Parse(goregular.TTF)
 	if err != nil {
 		return nil, err
@@ -50,6 +58,12 @@ func RenderTextWithOptions(text string, width, height int, opts TextOptions) (im
 	if opts.Orientation == Vertical {
 		renderW, renderH = height, width
 	}
+
+	size := opts.FontSize
+	if size <= 0 {
+		size = FitFontSize(f, text, renderW, renderH, opts.WordBreakOnly)
+	}
+	block := layoutText(f, text, renderW, size, opts.WordBreakOnly)
 
 	// Set colors based on invert option
 	bgColor := color.White
@@ -65,36 +79,20 @@ func RenderTextWithOptions(text string, width, height int, opts TextOptions) (im
 
 	// Set up freetype context
 	c := freetype.NewContext()
-	c.SetDPI(203) // Match printer DPI
+	c.SetDPI(textDPI)
 	c.SetFont(f)
-	c.SetFontSize(opts.FontSize)
+	c.SetFontSize(size)
 	c.SetClip(img.Bounds())
 	c.SetDst(img)
 	c.SetSrc(&image.Uniform{fgColor})
 	c.SetHinting(font.HintingFull)
 
-	// Calculate text position (centered vertically)
-	face := truetype.NewFace(f, &truetype.Options{Size: opts.FontSize, DPI: 203})
-	metrics := face.Metrics()
-	textHeight := metrics.Ascent.Ceil()
-
-	// Word wrap and draw
-	var lines []string
-	if opts.WordBreakOnly {
-		lines = wrapTextWordOnly(text, face, renderW-10)
-	} else {
-		lines = wrapText(text, face, renderW-10)
-	}
-	y := (renderH-len(lines)*int(metrics.Height.Ceil()))/2 + textHeight
-
-	for _, line := range lines {
+	y := (renderH-block.inkH)/2 - block.inkTop
+	for _, line := range block.lines {
 		// Center each line horizontally
-		lineWidth := measureString(face, line)
-		x := (renderW - lineWidth) / 2
-
-		pt := freetype.Pt(x, y)
-		c.DrawString(line, pt)
-		y += int(metrics.Height.Ceil())
+		x := (renderW - measureString(block.face, line)) / 2
+		c.DrawString(line, freetype.Pt(x, y))
+		y += block.lineH
 	}
 
 	// Rotate if vertical
@@ -103,6 +101,87 @@ func RenderTextWithOptions(text string, width, height int, opts TextOptions) (im
 	}
 
 	return img, nil
+}
+
+// textBlock is wrapped text at one font size, measured in pixels.
+type textBlock struct {
+	face   font.Face
+	lines  []string
+	lineH  int
+	inkTop int // top of the ink relative to the first baseline (<= 0)
+	inkH   int // ink height of the whole block
+	maxW   int // widest line advance
+}
+
+func layoutText(f *truetype.Font, text string, renderW int, size float64, wordOnly bool) textBlock {
+	face := truetype.NewFace(f, &truetype.Options{Size: size, DPI: textDPI, Hinting: font.HintingFull})
+	b := textBlock{face: face, lineH: face.Metrics().Height.Ceil()}
+	if wordOnly {
+		b.lines = wrapTextWordOnly(text, face, renderW-2*textMarginX)
+	} else {
+		b.lines = wrapText(text, face, renderW-2*textMarginX)
+	}
+
+	top, bottom, inked := 0, 0, false
+	for i, line := range b.lines {
+		if w := measureString(face, line); w > b.maxW {
+			b.maxW = w
+		}
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		bounds, _ := font.BoundString(face, line)
+		lt, lb := i*b.lineH+bounds.Min.Y.Floor(), i*b.lineH+bounds.Max.Y.Ceil()
+		if !inked || lt < top {
+			top = lt
+		}
+		if !inked || lb > bottom {
+			bottom = lb
+		}
+		inked = true
+	}
+	b.inkTop, b.inkH = top, bottom-top
+	return b
+}
+
+// fits reports whether the block fits inside renderW x renderH with margins.
+// In word-only mode a word that had to be split does not count as fitting,
+// so auto-sizing shrinks the text instead of breaking words.
+func (b textBlock) fits(text string, renderW, renderH int, wordOnly bool) bool {
+	maxW := renderW - 2*textMarginX
+	if b.maxW > maxW || b.inkH > renderH-2*textMarginY {
+		return false
+	}
+	if wordOnly {
+		for _, word := range strings.Fields(text) {
+			if measureString(b.face, word) > maxW {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// FitFontSize returns the largest font size (points, 0.25 pt steps) at which
+// text fits the renderW x renderH area, or minFontSize if nothing fits.
+func FitFontSize(f *truetype.Font, text string, renderW, renderH int, wordOnly bool) float64 {
+	fitsAt := func(size float64) bool {
+		return layoutText(f, text, renderW, size, wordOnly).fits(text, renderW, renderH, wordOnly)
+	}
+	// Ink of a single line is at most ~1.2 em tall, so this bounds the search.
+	lo, hi := minFontSize, float64(renderH)*72/textDPI*1.25
+	if !fitsAt(lo) {
+		return lo
+	}
+	for hi-lo > 0.25 {
+		mid := (lo + hi) / 2
+		if fitsAt(mid) {
+			lo = mid
+		} else {
+			hi = mid
+		}
+	}
+	return lo
 }
 
 // wrapText splits text into lines that fit within maxWidth (breaks anywhere)
@@ -147,6 +226,9 @@ func wrapTextWordOnly(text string, face font.Face, maxWidth int) []string {
 		}
 
 		currentLine := words[0]
+		if measureString(face, currentLine) > maxWidth {
+			currentLine = breakLongWord(currentLine, face, maxWidth, &lines)
+		}
 		for i := 1; i < len(words); i++ {
 			word := words[i]
 			testLine := currentLine + " " + word

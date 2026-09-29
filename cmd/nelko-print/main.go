@@ -63,7 +63,6 @@ type App struct {
 	// Text mode
 	textEntry     *widget.Entry
 	orientation   imaging.Orientation
-	fontSize      float64
 	textInvert    bool
 	wordBreakOnly bool
 
@@ -89,10 +88,9 @@ func main() {
 		threshold:     128,
 		copies:        1,
 		invert:        false,
-		fontSize:      24,
 		orientation:   imaging.Vertical, // "Horizontal" in the UI, see textOrientation
 		textInvert:    false,
-		wordBreakOnly: false,
+		wordBreakOnly: true,
 		designDoc:     &label.Document{},
 		activeTab:     "Image",
 	}
@@ -278,13 +276,6 @@ func (a *App) buildUI() fyne.CanvasObject {
 	})
 	orientationSelect.SetSelected("Horizontal")
 
-	fontSizeSlider := widget.NewSlider(4, 72) // Reduced min from 8 to 4
-	fontSizeSlider.Value = a.fontSize
-	fontSizeSlider.OnChanged = func(f float64) {
-		a.fontSize = f
-		a.updateTextPreview()
-	}
-
 	textInvertCheck := widget.NewCheck("Invert", func(b bool) {
 		a.textInvert = b
 		a.updateTextPreview()
@@ -294,10 +285,10 @@ func (a *App) buildUI() fyne.CanvasObject {
 		a.wordBreakOnly = b
 		a.updateTextPreview()
 	})
+	wordBreakCheck.SetChecked(a.wordBreakOnly)
 
 	textSettings := widget.NewForm(
 		widget.NewFormItem("Orientation", orientationSelect),
-		widget.NewFormItem("Font Size", fontSizeSlider),
 		widget.NewFormItem("", textInvertCheck),
 		widget.NewFormItem("", wordBreakCheck),
 	)
@@ -305,6 +296,7 @@ func (a *App) buildUI() fyne.CanvasObject {
 	textTab := container.NewVBox(
 		a.textEntry,
 		textSettings,
+		widget.NewLabel("Text is sized automatically to fill the label."),
 	)
 
 	// === TABS ===
@@ -320,8 +312,9 @@ func (a *App) buildUI() fyne.CanvasObject {
 
 	// Preview
 	a.previewImg = canvas.NewImageFromImage(nil)
-	a.previewImg.SetMinSize(fyne.NewSize(150, 160))
+	a.previewImg.SetMinSize(fyne.NewSize(150, 100))
 	a.previewImg.FillMode = canvas.ImageFillContain
+	a.previewImg.ScaleMode = canvas.ImageScalePixels // crisp printer dots
 
 	// Left panel - Connection and Settings
 	leftPanel := container.NewVBox(
@@ -345,7 +338,7 @@ func (a *App) buildUI() fyne.CanvasObject {
 	// Right panel: draggable split between the editing tabs (top) and the
 	// shared mono preview (bottom). Default gives the tabs/canvas most of the
 	// height; drag the divider to resize either side.
-	rightPanel := container.NewVSplit(tabs, container.NewCenter(a.previewImg))
+	rightPanel := container.NewVSplit(tabs, container.NewPadded(a.previewImg))
 	rightPanel.SetOffset(0.66)
 
 	content := container.NewHSplit(leftPanel, rightPanel)
@@ -725,7 +718,7 @@ func (a *App) updateTextPreview() {
 	}
 
 	opts := imaging.TextOptions{
-		FontSize:      a.fontSize,
+		FontSize:      0, // auto-fit
 		Orientation:   a.orientation,
 		Invert:        a.textInvert,
 		WordBreakOnly: a.wordBreakOnly,
