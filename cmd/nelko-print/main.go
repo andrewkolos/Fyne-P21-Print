@@ -79,6 +79,9 @@ type App struct {
 	textInvert    bool
 	wordBreakOnly bool
 
+	// Cable mode
+	cable cableTab
+
 	// Designer mode
 	designDoc    *label.Document
 	designCanvas *labelCanvas
@@ -318,6 +321,7 @@ func (a *App) buildUI() fyne.CanvasObject {
 	tabs := container.NewAppTabs(
 		container.NewTabItem("Image", imageTab),
 		container.NewTabItem("Text", textTab),
+		container.NewTabItem("Cable", a.buildCableTab()),
 		container.NewTabItem("Designer", a.buildDesignerTab()),
 	)
 	tabs.OnSelected = func(ti *container.TabItem) {
@@ -686,6 +690,8 @@ func (a *App) refreshActivePreview() {
 	switch a.activeTab {
 	case "Text":
 		a.updateTextPreview()
+	case "Cable":
+		a.updateCablePreview()
 	case "Designer":
 		a.renderDesignPreview()
 	default:
@@ -717,7 +723,7 @@ func (a *App) updatePreview() {
 
 	// Show text labels landscape, the way they are read and the way the
 	// Designer shows them. Loaded images are previewed as they print.
-	if a.activeTab == "Text" {
+	if a.activeTab == "Text" || a.activeTab == "Cable" {
 		preview = imaging.RotatePreviewForDisplay(preview)
 	}
 
