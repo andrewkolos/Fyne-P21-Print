@@ -11,6 +11,20 @@ import (
 	"nelko-print/internal/imaging"
 )
 
+// cablePresets are typical outer diameters; the layout tolerates +-1 mm, so
+// nobody has to measure a USB cable.
+var cablePresets = []struct {
+	name string
+	mm   float64
+}{
+	{"USB cable (4 mm)", 4},
+	{"Thin USB / earbuds (3 mm)", 3},
+	{"Ethernet (6 mm)", 6},
+	{"HDMI / power cord (7.5 mm)", 7.5},
+}
+
+const customCable = "Custom size..."
+
 // cableTab holds the Cable tab's widgets and settings.
 type cableTab struct {
 	entry      *widget.Entry
@@ -22,7 +36,7 @@ type cableTab struct {
 
 func (a *App) buildCableTab() fyne.CanvasObject {
 	c := &a.cable
-	c.diameterMM = 5
+	c.diameterMM = cablePresets[0].mm
 
 	c.entry = widget.NewMultiLineEntry()
 	c.entry.SetPlaceHolder("Cable label text...")
@@ -30,7 +44,9 @@ func (a *App) buildCableTab() fyne.CanvasObject {
 	c.entry.OnChanged = func(string) { a.updateCablePreview() }
 
 	diameter := widget.NewEntry()
+	diameter.SetPlaceHolder("diameter in mm")
 	diameter.SetText(strconv.FormatFloat(c.diameterMM, 'g', -1, 64))
+	diameter.Hide()
 	diameter.OnChanged = func(s string) {
 		d, err := strconv.ParseFloat(strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(s), "mm")), 64)
 		if err != nil || d <= 0 {
@@ -39,6 +55,27 @@ func (a *App) buildCableTab() fyne.CanvasObject {
 		c.diameterMM = d
 		a.updateCablePreview()
 	}
+
+	names := make([]string, 0, len(cablePresets)+1)
+	for _, p := range cablePresets {
+		names = append(names, p.name)
+	}
+	cableType := widget.NewSelect(append(names, customCable), func(s string) {
+		if s == customCable {
+			diameter.Show()
+			diameter.OnChanged(diameter.Text)
+			return
+		}
+		diameter.Hide()
+		for _, p := range cablePresets {
+			if p.name == s {
+				c.diameterMM = p.mm
+				diameter.SetText(strconv.FormatFloat(p.mm, 'g', -1, 64))
+			}
+		}
+		a.updateCablePreview()
+	})
+	cableType.SetSelected(cablePresets[0].name)
 
 	mode := widget.NewRadioGroup([]string{"Wrap", "Flag"}, func(s string) {
 		if s == "Flag" {
@@ -61,7 +98,7 @@ func (a *App) buildCableTab() fyne.CanvasObject {
 	c.info.Wrapping = fyne.TextWrapWord
 
 	form := widget.NewForm(
-		widget.NewFormItem("Cable Ø (mm)", diameter),
+		widget.NewFormItem("Cable", container.NewVBox(cableType, diameter)),
 		widget.NewFormItem("Style", mode),
 		widget.NewFormItem("", invert),
 	)
